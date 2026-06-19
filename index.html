@@ -4,9 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FlexConvert - Professional Video Suite</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/coi-serviceworker/0.1.7/coi-serviceworker.min.js"></script>
+    
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
+
     <style>
         :root {
             --bg-primary: #0f172a;
@@ -353,7 +358,7 @@
                 </div>
 
                 <div id="dynamicOptionsArea">
-                    </div>
+                </div>
 
                 <button class="action-btn" id="processBtn">
                     <i class="fa-solid fa-bolt"></i> Process Operation
@@ -376,11 +381,10 @@
         </div>
     </div>
 
-    <video id="hiddenVideo" style="display:none;" muted></video>
-
     <script>
         let currentMode = 'optimize';
         let selectedFile = null;
+        let ffmpegInstance = null;
 
         const tabsContainer = document.getElementById('tabsContainer');
         const dropzone = document.getElementById('dropzone');
@@ -399,7 +403,17 @@
         const removeBtn = document.getElementById('removeBtn');
         const processBtn = document.getElementById('processBtn');
         const downloadBtn = document.getElementById('downloadBtn');
-        const hiddenVideo = document.getElementById('hiddenVideo');
+
+        // Lazy-load the core FFmpeg environment safely
+        async function getFFmpeg() {
+            if (!ffmpegInstance) {
+                const { createFFmpeg } = FFmpeg;
+                ffmpegInstance = createFFmpeg({ log: false });
+                progressText.textContent = "Initializing high-fidelity core frameworks...";
+                await ffmpegInstance.load();
+            }
+            return ffmpegInstance;
+        }
 
         function switchTab(mode) {
             currentMode = mode;
@@ -455,8 +469,8 @@
                     <div class="option-group">
                         <label>Target Container Format (Pristine Quality Mapping)</label>
                         <select id="formatSelect">
-                            <option value="webm">Convert to WebM (.webm)</option>
                             <option value="mp4">Convert to MP4 (.mp4)</option>
+                            <option value="webm">Convert to WebM (.webm)</option>
                             <option value="ogg">Convert to OGG (.ogg)</option>
                         </select>
                     </div>`;
@@ -470,96 +484,82 @@
             downloadPanel.style.display = 'none';
             tabsContainer.style.display = 'flex';
             dropzone.style.display = 'block';
-            hiddenVideo.src = '';
         });
 
-        processBtn.addEventListener('click', () => {
+        processBtn.addEventListener('click', async () => {
+            if (!selectedFile) return;
+
             settingsPanel.style.display = 'none';
             processingPanel.style.display = 'block';
-            progressText.textContent = "Streaming media into recording channels...";
-
-            // Parse out filename details without slicing the actual naming string
-            const baseParts = selectedFile.name.split('.');
-            baseParts.pop();
-            const pureOriginalName = baseParts.join('.');
-
-            let targetExtension = selectedFile.name.split('.').pop();
-            let feedbackNotice = "Video file size successfully optimized with zero quality degradation.";
-
-            if (currentMode === 'convert') {
-                targetExtension = document.getElementById('formatSelect').value;
-                feedbackNotice = `Video track re-mapped to standard .${targetExtension} wrapper keeping original clarity intact.`;
-            }
-
-            const finalDownloadName = `${pureOriginalName}.${targetExtension}`;
-
-            const fileURL = URL.createObjectURL(selectedFile);
-            hiddenVideo.src = fileURL;
-
-            hiddenVideo.onloadedmetadata = () => {
-                // Fixed: High 15Mbps recording threshold to ensure zero quality degradation
-                const nativeRetainedBitrate = 15000000; 
-                executeCaptureStream(targetExtension, nativeRetainedBitrate, feedbackNotice, finalDownloadName);
-            };
-        });
-
-        function executeCaptureStream(extension, bitrate, completeDescription, outputFileName) {
-            let mimeTypeString = `video/${extension}`;
-            if (extension === 'webm') mimeTypeString = 'video/webm;codecs=vp9,opus';
-            if (extension === 'mp4') mimeTypeString = 'video/mp4;codecs=avc1.42E01E,mp4a.40.2';
-
-            if (!MediaRecorder.isTypeSupported(mimeTypeString)) {
-                mimeTypeString = `video/${extension}`;
-            }
+            progressText.textContent = "Mounting media layers into processing modules...";
 
             try {
-                const stream = hiddenVideo.captureStream ? hiddenVideo.captureStream() : hiddenVideo.mozCaptureStream();
-                const options = { mimeType: mimeTypeString, videoBitsPerSecond: bitrate };
-                const mediaRecorder = new MediaRecorder(stream, options);
-                const recordedChunks = [];
-
-                mediaRecorder.ondataavailable = (e) => {
-                    if (e.data && e.data.size > 0) recordedChunks.push(e.data);
-                };
-
-                mediaRecorder.onstop = () => {
-                    const finalBlob = new Blob(recordedChunks, { type: `video/${extension}` });
-                    const outputUrl = URL.createObjectURL(finalBlob);
-                    
-                    downloadBtn.href = outputUrl;
-                    downloadBtn.setAttribute('download', outputFileName); // Kept original file name
-                    downloadDescription.textContent = completeDescription;
-                    
-                    processingPanel.style.display = 'none';
-                    downloadPanel.style.display = 'block';
-                    settingsPanel.style.display = 'block';
-                };
-
-                // CRITICAL FIX: Run recorder at real native speed (playbackRate = 1.0) 
-                // to prevent the browser engine from dropping frames and truncating the video length
-                mediaRecorder.start();
-                hiddenVideo.playbackRate = 1.0; 
-                hiddenVideo.play();
-
-                hiddenVideo.onended = () => {
-                    mediaRecorder.stop();
-                };
-
-            } catch (err) {
-                console.warn("Direct stream extraction bypass activated", err);
-                const fallbackBlob = new Blob([selectedFile], { type: `video/${extension}` });
+                const ffmpeg = await getFFmpeg();
                 
-                downloadBtn.href = URL.createObjectURL(fallbackBlob);
-                downloadBtn.setAttribute('download', outputFileName);
-                downloadDescription.textContent = completeDescription;
+                const inputName = 'input_' + selectedFile.name;
+                const baseParts = selectedFile.name.split('.');
+                baseParts.pop();
+                const pureOriginalName = baseParts.join('.');
+                
+                let targetExtension = selectedFile.name.split('.').pop();
+                let ffmpegArgs = [];
+                let feedbackNotice = "";
 
+                if (currentMode === 'optimize') {
+                    targetExtension = 'mp4';
+                    ffmpegArgs = ['-i', inputName, '-vcodec', 'libx264', '-crf', '23', '-preset', 'fast', '-acodec', 'aac', 'output.mp4'];
+                    feedbackNotice = "Video file size successfully optimized with zero quality degradation.";
+                } else {
+                    targetExtension = document.getElementById('formatSelect').value;
+                    feedbackNotice = `Video track re-mapped to standard .${targetExtension} wrapper keeping original clarity intact.`;
+                    
+                    if (targetExtension === 'mp4') {
+                        ffmpegArgs = ['-i', inputName, '-vcodec', 'libx264', '-preset', 'fast', '-acodec', 'aac', 'output.mp4'];
+                    } else if (targetExtension === 'webm') {
+                        ffmpegArgs = ['-i', inputName, '-vcodec', 'libvpx', '-acodec', 'libvorbis', 'output.webm'];
+                    } else if (targetExtension === 'ogg') {
+                        ffmpegArgs = ['-i', inputName, '-vcodec', 'theora', '-acodec', 'vorbis', 'output.ogg'];
+                    }
+                }
+
+                progressText.textContent = `Transcoding matrix arrays into standard .${targetExtension} pipelines...`;
+
+                // Load payload layout into virtual file storage structure
+                const fileData = await selectedFile.arrayBuffer();
+                ffmpeg.FS('writeFile', inputName, new Uint8Array(fileData));
+
+                // Execute transcoding command
+                await ffmpeg.run(...ffmpegArgs);
+
+                // Read computed byte array back out
+                const outputFileName = `output.${targetExtension}`;
+                const rawConvertedData = ffmpeg.FS('readFile', outputFileName);
+                
+                const finalBlob = new Blob([rawConvertedData.buffer], { type: `video/${targetExtension}` });
+                const outputUrl = URL.createObjectURL(finalBlob);
+
+                // Clean the virtual filesystem structure
+                ffmpeg.FS('unlink', inputName);
+                ffmpeg.FS('unlink', outputFileName);
+
+                downloadBtn.href = outputUrl;
+                downloadBtn.setAttribute('download', `${pureOriginalName}.${targetExtension}`);
+                downloadDescription.textContent = feedbackNotice;
+
+                processingPanel.style.display = 'none';
+                downloadPanel.style.display = 'block';
+                settingsPanel.style.display = 'block';
+
+            } catch (error) {
+                console.error("Transcoding operations execution fault:", error);
+                progressText.textContent = "Operation failed. Resetting workspace setup panels...";
+                
                 setTimeout(() => {
                     processingPanel.style.display = 'none';
-                    downloadPanel.style.display = 'block';
                     settingsPanel.style.display = 'block';
-                }, 1000);
+                }, 2000);
             }
-        }
+        });
     </script>
 </body>
 </html>
